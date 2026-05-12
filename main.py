@@ -3,6 +3,13 @@ from mcp.server.fastmcp import Context
 from mcp.server.fastmcp.exceptions import ResourceError
 from typing import Tuple
 import base64
+import os
+from typing import List
+from mcp.server.fastmcp.exceptions import ToolError
+from pydantic import AnyUrl
+from mcp.types import ListResourceResult,Resource
+from mcp.server.fastmcp.exceptions import ValidationError
+ToolError
 
 # FastMCPアプリケーションのインスタンスを作成
 # アプリケーション名はuv initで指定したものと同じにします
@@ -71,6 +78,54 @@ async def get_image(ctx: Context, image_name: str) -> str:
     except FileNotFoundError:
         await ctx.error(f"画像ファイルが見つかりません: {file_path}")
         raise ResourceError(f"画像ファイル「{image_name}」は見つかりませんでした。")
+
+@mcp.tool()
+async def list_all_templates(ctx: Context) -> List[str]:
+    """
+    templatesディレクトリ内のすべてのファイル名をリストで返します
+    """
+    try:
+        return sorted(os.listdir("templates"))
+    except Exception as e:
+        raise ToolError(f"テンプレート一覧の取得中にエラーが発生しました: {e}")
+
+@mcp.tool()
+async def list_templates(ctx: Context, cursor: str = "0") -> ListResourcesResult:
+    """
+    templatesディレクトリ内のファイル一覧をページネーション付きで取得します。
+    """
+    await ctx.info(f"テンプレート一覧を取得します (cursor: {cursor})")
+
+    page_size = 2  # 1ページあたりの項目数
+
+    # カーソルを解釈して、ページの開始位置を決定
+    try:
+        start = 0 if cursor is None else int(cursor)
+    except ValueError:
+        raise ValidationError("無効なカーソルです。数値を指定してください。")
+
+    end = start + page_size
+
+    try:
+        all_files = sorted(os.listdir("templates"))  # 順序を安定させるためにソート
+        total_files = len(all_files)
+        paginated_files = all_files[start:end]
+        has_more = end < total_files
+
+        # 現在のページのアイテムをResourceオブジェクトのリストとして作成
+        page_items = [
+            Resource(uri=AnyUrl(f"mcp://template/{file_name}"), name=file_name, description=f"{file_name}")
+            for file_name in paginated_files
+        ]
+
+        # 次のページが存在する場合、次のカーソルを生成
+        next_cursor = str(end) if has_more else None
+
+        return ListResourcesResult(resources=page_items, nextCursor=next_cursor)
+
+    except Exception as e:
+        await ctx.error(f"テンプレート一覧の取得中にエラーが発生しました: {e}")
+        raise ToolError(f"テンプレート一覧の取得中にエラーが発生しました: {e}")
 
 if __name__ == "__main__":
     # サーバーを起動
